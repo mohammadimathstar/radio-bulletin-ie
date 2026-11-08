@@ -13,12 +13,15 @@ from src.util.io import (
 )
 from .validate import validate_entity_types, validate_entity_mentions
 from src.util.correct_llm import correct_llm_offsets
+from src.util.splitters import chunk_text
 
 
 LOCATED_STATUSES = ("exact_normalized", "fuzzy", "exact_raw")
 SCHEMA_VERSION = "1.0"
 ANNOTATION_GUIDELINE_VERSION = "1.0"
 LANGUAGE = "nl"
+
+MAX_CHUNK_CHARS = 1000
 
 
 def call_parse(cfg: ApiConfig, instructions: str, payload: str, response_model: NERExtraction) -> dict:
@@ -55,11 +58,6 @@ def run_ner(
 
     # Correct entity offsets.
     ner_dict["entities"] = correct_llm_offsets(bulletin["text"], ner_dict["entities"])
-
-    print(ner_dict['entities'])
-
-    print("LOCATED_STATUSES:", LOCATED_STATUSES)
-    print("Type:", type(LOCATED_STATUSES))
         
     # Keep only confidently located entities.
     # located: list[dict] = []
@@ -103,6 +101,125 @@ def run_ner(
 
 
 
+def run_ner_chunk(
+    cfg: ApiConfig,
+    bulletin: dict,
+    bid,
+    issue_output_path: str,
+) -> dict:
+    """Run chunked NER and merge results at bulletin level."""
+
+    original_text = bulletin["text"]
+    chunks = chunk_text(original_text, MAX_CHUNK_CHARS)
+
+    all_entities = []
+    all_topics = []
+
+    for chunk_index, (global_offset, chunk) in enumerate(chunks):
+
+        # Use the original bulletin metadata, replacing only its text.
+        chunk_bulletin = {
+            **bulletin,
+            "text": chunk,
+        }
+
+        extraction = call_parse(
+            cfg,
+            ENTITY_SYSTEM_PROMPT,
+            build_entity_input(chunk_bulletin),
+            NERExtraction,
+        )
+
+        chunk_dict = extraction.model_dump(mode="json")
+
+        # Merge topics, preserving order and avoiding duplicates.
+        for topic in chunk_dict["topics"]:
+            if topic not in all_topics:
+                all_topics.append(topic)
+
+        # Validate entity types before correcting offsets.
+        entities = validate_entity_types(chunk_dict["entities"])
+
+        # Correct offsets relative to the chunk.
+        entities = correct_llm_offsets(chunk, entities)
+
+        # Convert chunk-local offsets to bulletin-global offsets.
+        for entity in entities:
+
+            # Correct global offsets.
+            entity["start"] += global_offset
+            entity["end"] += global_offset
+
+            # Assign a unique ID before adding the entity.
+            entity["id"] = f"e{len(all_entities) + 1}"
+
+            # Namespace event IDs by chunk.
+            if entity.get("type") == "Event" and entity.get("event_id"):
+                entity["event_id"] = (
+                    f"chunk_{chunk_index + 1}_{entity['event_id']}"
+                )
+
+            all_entities.append(entity)
+
+    # Keep only entities whose offsets were successfully located.
+    # located = []
+    # dropped = []
+
+    # for entity in all_entities:
+    #     if entity.get("offset_method") in LOCATED_STATUSES:
+    #         located.append(entity)
+    #     else:
+    #         dropped.append(entity)
+
+    # if dropped:
+    #     log_issue(
+    #         issue_output_path,
+    #         bid,
+    #         "NER",
+    #         [
+    #             f"dropped {len(dropped)} unlocatable entities: "
+    #             + ", ".join(e["id"] for e in dropped)
+    #         ],
+    #     )
+
+    # # Remove internal offset diagnostics before final validation.
+    # for entity in located:
+    #     entity.pop("offset_method", None)
+    #     entity.pop("offset_score", None)
+
+    ner_dict = {
+        "topics": all_topics,
+        "entities": all_entities, # located,
+    }
+
+    # Add metadata locally using Python.
+    ner_dict.update({
+        "bulletin_id": bid,
+        "bulletin_date": bulletin.get("bulletin_date"),
+        "language": LANGUAGE,
+        "schema_version": SCHEMA_VERSION,
+        "annotation_guideline_version": ANNOTATION_GUIDELINE_VERSION,
+        "text": original_text,
+        "model": cfg.model,
+    })
+
+    # Validate the complete output.
+    final_output = NEROutput.model_validate(ner_dict)
+
+    # Final validation against the original bulletin text.
+    residual = validate_entity_mentions(
+        original_text,
+        final_output.model_dump(mode="json")["entities"],
+    )
+
+    if residual:
+        raise ValueError(
+            f"Residual entity errors for {bid}: {residual}"
+        )
+
+    return final_output.model_dump(mode="json")
+
+
 def run(
     input_path: str,
     entity_output_path: str,
@@ -142,7 +259,7 @@ def run(
 
         else:
             try:
-                ner_dict = run_ner(cfg, bulletin, bid, issue_output_path)
+                ner_dict = run_ner_chunk(cfg, bulletin, bid, issue_output_path)
                 append_jsonl(entity_output_path, ner_dict)
                 cached[bid] = ner_dict
             except Exception as e:

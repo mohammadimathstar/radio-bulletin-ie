@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "langchain-core>=1.7.6",
     "openai>=3.46.0",
+    "pip>=26.3",
     "python-dotenv>=1.2.4",
+    "spacy>=3.8.18",
     "tqdm>=4.70.1",
     "typesafe-sdk>=0.7.5",
 ]
