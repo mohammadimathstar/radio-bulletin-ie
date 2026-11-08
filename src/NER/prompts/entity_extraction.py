@@ -55,6 +55,17 @@ TEMPORAL ANNOTATION FOR EVENTS
 - If unresolved, leave the corresponding normalized value null.
 - Do not confuse the date of a report/announcement with the date of the event.
 
+EVENT COREFERENCE
+- Each event mention has its own mention id.
+- Mentions of the same underlying event share one event_id.
+- event_id values are local to the bulletin.
+- Assign IDs in order of first occurrence: event_1, event_2, etc.
+- Reuse an existing ID when a later mention clearly refers to that event.
+- Do not merge separate events merely because they share participants,
+  location, date, or subject.
+- Use null when the reference is ambiguous.
+- The first mention should also receive an event_id.
+
 TOPICS (MULTI-LABEL)
 politics: government, elections, parliament, parties, public policy, diplomacy, international relations, treaties.
 military: armed forces, defence, weapons, operations, battles, wars, troop movements.

@@ -2,7 +2,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    # model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    model_config = ConfigDict(extra="ignore")
 
 
 class MentionBase(StrictModel):

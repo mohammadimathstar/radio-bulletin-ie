@@ -1,6 +1,6 @@
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator, Field
 from typing import Literal
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Self
 
 from .entities import Entity
@@ -20,20 +20,32 @@ class BulletinInput(BaseModel):
         self.bulletin_date = parse_bulletin_id(self.bulletin_id)
         return self
 
-class NEROutput(BaseModel):
+
+class NERExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    topics: list[TOPICS]
+    entities: list[Entity]
+
+
+class NEROutput(BaseModel):
 
     bulletin_id: str
     bulletin_date: str | None
-    language: Literal["nl"]
+
+    topics: list[TOPICS]
+    entities: list[Entity]
+
+    language: Literal["nl"] 
     schema_version: str
     annotation_guideline_version: str
     text: str
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    model: str
 
-    topics: list[TOPICS]
-
-    entities: list[Entity]
-
+    
 
 def parse_bulletin_id(bulletin_id: str) -> str | None:
     parts = bulletin_id.split(":")
