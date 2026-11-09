@@ -3,7 +3,7 @@ import unicodedata
 
 from rapidfuzz import fuzz
 
-from models import Mention
+from RelationE.models.models import Mention
 
 TITLES = {
     "mister", "mr", "mrs", "miss",

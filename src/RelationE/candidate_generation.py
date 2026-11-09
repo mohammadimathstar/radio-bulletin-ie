@@ -6,7 +6,7 @@ from itertools import combinations
 
 from rapidfuzz import fuzz
 
-from .models import Mention, CandidatePair, ContextGroup
+from .models.models import Mention, CandidatePair, ContextGroup
 from .schema import RELATION_SCHEMA
 
 

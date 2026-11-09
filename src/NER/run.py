@@ -5,15 +5,19 @@ from tqdm import tqdm
 import argparse
 
 from src.configs.ner_cfg import ApiConfig
-from .prompts.entity_extraction import ENTITY_SYSTEM_PROMPT, build_entity_input
-from .models.bulletins import NEROutput, NERExtraction
 from src.util.io import (
     read_jsonl, load_records_by_id, append_jsonl, 
     existing_ids, log_issue
 )
-from .validate import validate_entity_types, validate_entity_mentions
 from src.util.correct_llm import correct_llm_offsets
 from src.util.splitters import chunk_text
+
+from .models.bulletins import NEROutput, NERExtraction
+
+from .prompts import ENTITY_SYSTEM_PROMPT, build_entity_input
+from .validate import validate_entity_types, validate_entity_mentions
+
+
 
 
 LOCATED_STATUSES = ("exact_normalized", "fuzzy", "exact_raw")
@@ -145,6 +149,15 @@ def run_ner_chunk(
 
         # Convert chunk-local offsets to bulletin-global offsets.
         for entity in entities:
+
+            # Check that offsets are available.
+            if entity.get("start") is None or entity.get("end") is None:
+                print(
+                    f"WARNING: Missing offsets in chunk {chunk_index + 1}: "
+                    f"{entity.get('id')} - {entity.get('text')!r}"
+                )
+                continue
+
 
             # Correct global offsets.
             entity["start"] += global_offset

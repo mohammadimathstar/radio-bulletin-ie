@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from typesafe_sdk import Choice
 
-from .models import ContextGroup, JEVBatch
+from .models.models import ContextGroup, JEVBatch
 from .schema import RELATION_SCHEMA, NO_RELATION
 
 

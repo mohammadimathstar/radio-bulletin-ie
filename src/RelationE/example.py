@@ -5,7 +5,7 @@ import spacy
 from dotenv import load_dotenv
 from typesafe_sdk import TypeSafeClient
 
-from .models import Mention
+from .models.models import Mention
 
 from .candidate_generation import (
     CandidateConfig,

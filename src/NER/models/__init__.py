@@ -8,13 +8,13 @@ from .entities import (
     PlaceEntity,
     VehicleEntity,
 )
-from .relations import (
-    RELATION_CATALOGUE,
-    RELATION_SCHEMA,
-    RelationCandidate,
-    RelationType,
-    ValidatedRelation,
-)
+# from ...RelationE.relations import (
+#     RELATION_CATALOGUE,
+#     RELATION_SCHEMA,
+#     RelationCandidate,
+#     RelationType,
+#     ValidatedRelation,
+# )
 
 __all__ = [
     # base
@@ -29,9 +29,9 @@ __all__ = [
     "VehicleEntity",
     "LegalDocumentEntity",
     # relations
-    "RELATION_SCHEMA",
-    "RELATION_CATALOGUE",
-    "RelationType",
-    "RelationCandidate",
-    "ValidatedRelation",
+    # "RELATION_SCHEMA",
+    # "RELATION_CATALOGUE",
+    # "RelationType",
+    # "RelationCandidate",
+    # "ValidatedRelation",
 ]
