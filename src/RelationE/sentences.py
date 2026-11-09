@@ -6,6 +6,7 @@ from bisect import bisect_right
 from typing import Iterable
 
 from .models import Mention
+from src.configs.re_cfg import CandidateConfig
 
 _BOUNDARY = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[A-Z0-9\"'(])")
 _ABBREVIATIONS = frozenset("dr mr prof ir jhr st gen kol maj kapt luit adm mevr mej nr no blz enz bijv ca vgl".split())
@@ -58,22 +59,14 @@ def assign_sentence_ids(mentions: Iterable[Mention], spans: list[tuple[int, int]
 # Distance calculation
 # ---------------------------------------------------------
 
-def get_character_distance(
-    entity1: Mention,
-    entity2: Mention,
-) -> int:
-    """
-    Return the number of characters between two mention spans.
-
-    Returns zero if spans overlap.
-    """
-
-    left, right = sorted(
-        [entity1, entity2],
-        key=lambda entity: entity.start,
-    )
-
+def character_distance(m1: Mention, m2: Mention) -> int:
+    left, right = sorted((m1, m2), key=lambda m: (m.start, m.end))
     return max(0, right.start - left.end)
+
+
+def sentence_distance(m1: Mention, m2: Mention) -> int | None:
+    return None if m1.sentence_id is None or m2.sentence_id is None else abs(m1.sentence_id - m2.sentence_id)
+
 
 
 def is_within_sentence_distance(
@@ -105,45 +98,27 @@ def is_within_sentence_distance(
 # Context extraction
 # ---------------------------------------------------------
 
-def get_context_boundaries(
-    entity1: Mention,
-    entity2: Mention,
-    text: str,
-    sentence_spans: list[tuple[int, int]],
-    padding: int,
-) -> tuple[int, int]:
-    """
-    Extract a context window covering the sentences containing
-    both mentions.
+def _snap_left(text: str, pos: int) -> int:
+    while pos > 0 and not text[pos - 1].isspace():
+        pos -= 1
+    return pos
 
-    If sentence assignments are unavailable, use the mention
-    spans directly.
-    """
 
-    if (
-        entity1.sentence_id is not None
-        and entity2.sentence_id is not None
-    ):
+def _snap_right(text: str, pos: int) -> int:
+    while pos < len(text) and not text[pos].isspace():
+        pos += 1
+    return pos
 
-        first = min(
-            entity1.sentence_id,
-            entity2.sentence_id,
-        )
 
-        last = max(
-            entity1.sentence_id,
-            entity2.sentence_id,
-        )
-
-        start = sentence_spans[first][0]
-        end = sentence_spans[last][1]
-
+def context_boundaries(m1: Mention, m2: Mention, text: str, spans: list[tuple[int, int]], cfg: CandidateConfig) -> tuple[int, int]:
+    """The sentences of both mentions (or the mentions themselves without sentence ids) plus padding; always contains both mentions completely; capped at max_context_chars."""
+    lo, hi = min(m1.start, m2.start), max(m1.end, m2.end)
+    if m1.sentence_id is not None and m2.sentence_id is not None:
+        a, b = sorted((m1.sentence_id, m2.sentence_id))
+        start, end = min(spans[a][0], lo), max(spans[b][1], hi)
     else:
-
-        start = min(entity1.start, entity2.start)
-        end = max(entity1.end, entity2.end)
-
-    start = max(0, start - padding)
-    end = min(len(text), end + padding)
-
-    return start, end
+        start, end = lo, hi
+    if end - start > cfg.max_context_chars:
+        start, end = lo, hi
+    start, end = max(0, start - cfg.context_padding), min(len(text), end + cfg.context_padding)
+    return _snap_left(text, start), _snap_right(text, end)

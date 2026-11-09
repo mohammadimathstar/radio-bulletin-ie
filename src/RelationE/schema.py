@@ -547,14 +547,19 @@ FINE_RELATIONS: dict[str, RelationDefinition] = {
 
     "located_in": RelationDefinition(
         description=(
-            "The subject Place, Organization or Vehicle is physically "
-            "located in the object Place. Look for explicit evidence "
-            "such as 'in [Place]', 'te [Place]' or 'gelegen in "
-            "[Place]'. A dateline alone does not establish this "
-            "relation for an Organization or another entity."
+            "The subject Person, Organization, Vehicle or Place is "
+            "physically located in the object Place. For a Person, "
+            "this includes temporary physical presence at a particular "
+            "time, not necessarily residence or permanent assignment. "
+            "For an Organization or Vehicle, it indicates its physical "
+            "location. Look for explicit evidence such as 'in [Place]', "
+            "'te [Place]', 'aanwezig te [Place]' or 'bevindt zich in "
+            "[Place]'. A dateline alone does not establish this relation "
+            "for a Person, Organization or Vehicle. Do not infer a "
+            "Person's location merely from their title or nationality."
         ),
         allowed_types=_x(
-            (PLACE, ORG, VEHICLE),
+            (PERSON, PLACE, ORG, VEHICLE),
             (PLACE,),
         ),
     ),

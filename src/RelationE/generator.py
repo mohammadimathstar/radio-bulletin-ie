@@ -1,60 +1,23 @@
-from dataclasses import dataclass
-import argparse
-from itertools import combinations
+
+from collections import Counter
 
 from .models import Mention, CandidatePair, ContextGroup
-from .sentences import get_context_boundaries, is_within_sentence_distance, get_character_distance
-from .schema import compatible_relations, FINE_RELATIONS
+from .sentences import context_boundaries, sentence_distance, character_distance
+from .schema import compatible_relations, FINE_RELATIONS, RelationDefinition, get_schema
 
 from src.util.names import is_same_entity
-
-# ---------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------
-
-@dataclass
-class CandidateConfig:
-    """
-    Configuration for candidate generation.
-
-    max_sentence_distance:
-        Maximum number of sentence boundaries between mentions.
-        0 = same sentence only.
-        1 = same or adjacent sentences.
-        2 = up to two sentences apart.
-
-    max_character_distance:
-        Maximum number of characters separating the two mentions.
-
-    similarity_threshold:
-        If two mentions have the same type and their normalized
-        name similarity reaches this threshold, the pair is excluded.
-
-    context_padding:
-        Number of additional characters included before and after
-        the sentences containing the target mentions.
-    """
-
-    max_sentence_distance: int = 0
-    max_character_distance: int = 500
-
-    similarity_threshold: float = 0.85
-
-    context_padding: int = 50
-
-
+from src.configs.re_cfg import CandidateConfig
 
 
 # ---------------------------------------------------------
 # Candidate generation
 # ---------------------------------------------------------
-
-def generate_candidates(
-    text: str,
-    mentions: list[Mention],
-    sent_spans: list[tuple[int, int]],
-    config: CandidateConfig | None = None,
-) -> list[CandidatePair]:
+def generate_candidates(mentions: list[Mention], 
+                        text: str, 
+                        spans: list[tuple[int, int]], 
+                        schema: dict[str, RelationDefinition] | None = None,
+                        cfg: CandidateConfig | None = None, stats: Counter | None = None
+                        ) -> list[CandidatePair]:
     """
     Generate candidate mention pairs.
 
@@ -67,140 +30,68 @@ def generate_candidates(
 
     Each remaining pair receives a list of compatible relations.
     """
+    cfg, schema = cfg or CandidateConfig(), schema or get_schema("fine")
 
-    if config is None:
-        config = CandidateConfig()
-
-    if config.max_sentence_distance < 0:
-        raise ValueError("max_sentence_distance cannot be negative")
-
-    if config.max_character_distance < 0:
-        raise ValueError("max_character_distance cannot be negative")
-
-    if not 0 <= config.similarity_threshold <= 1:
+    if cfg.max_sentence_distance < 0 or cfg.max_character_distance < 0:
+        raise ValueError("distances cannot be negative")
+    if not 0 <= cfg.similarity_threshold <= 1:
         raise ValueError("similarity_threshold must be between 0 and 1")
 
-    # Preserve textual order.
-    mentions = sorted(
-        mentions,
-        key=lambda entity: (entity.start, entity.end),
-    )
+    stats = stats if stats is not None else Counter()
+    ms = sorted(mentions, key=lambda m: (m.start, m.end))
+    found: list[CandidatePair] = []
+    for i, m1 in enumerate(ms):
+        for m2 in ms[i + 1:]:
+            if m2.start - m1.end > cfg.max_character_distance:
+                break                                                   # sorted by start: every later mention is even farther away
+            if m1.mention_id == m2.mention_id:
+                stats["same_mention"] += 1
+                continue
+            if cfg.skip_nested_same_type and m1.entity_type == m2.entity_type and m2.start < m1.end:
+                stats["nested_same_type"] += 1
+                continue
+            if is_same_entity(m1, m2, cfg):
+                stats["same_entity"] += 1
+                continue
+            relations = compatible_relations(m1.entity_type, m2.entity_type, schema)
+            if not relations:
+                stats["no_compatible_relation"] += 1
+                continue
+            sd = sentence_distance(m1, m2)
+            if sd is not None and sd > cfg.max_sentence_distance:
+                stats["sentence_distance"] += 1
+                continue
 
-    candidates = []
+            cs, ce = context_boundaries(m1, m2, text, spans, cfg)
+            found.append(CandidatePair("", m1, m2, relations, cs, ce, sd, character_distance(m1, m2)))
+    
+    if cfg.max_pairs is not None and len(found) > cfg.max_pairs:
+        stats["max_pairs_cut"] += len(found) - cfg.max_pairs
+        found = sorted(found, key=lambda p: (p.character_distance, p.entity1.start))[:cfg.max_pairs]
+    found.sort(key=lambda p: (p.entity1.start, p.entity2.start, p.entity1.end, p.entity2.end))
+    for n, p in enumerate(found, 1):
+        p.pair_id = f"P{n:05d}"
+    stats["candidate_pairs"] += len(found)
+    return found
 
-    pair_counter = 0
-
-    for entity1, entity2 in combinations(mentions, 2):
-
-        # 1. Never compare a mention with itself.
-        if entity1.mention_id == entity2.mention_id:
-            continue
-
-        # 2. Exclude likely mentions of the same real-world entity.
-        if is_same_entity(
-            entity1,
-            entity2,
-            config.similarity_threshold,
-        ):
-            continue
-
-        # 3. Type compatibility. (TODO)
-        relations = compatible_relations(
-            entity1.entity_type,
-            entity2.entity_type,
-            FINE_RELATIONS
-        )
-
-        if not relations:
-            continue
-
-        # 4. Sentence distance.
-        if not is_within_sentence_distance(
-            entity1,
-            entity2,
-            config.max_sentence_distance,
-        ):
-            continue
-
-        # 5. Character distance.
-        distance = get_character_distance(
-            entity1,
-            entity2,
-        )
-
-        if distance > config.max_character_distance:
-            continue
-
-        # 6. Context boundaries.
-        context_start, context_end = get_context_boundaries(
-            entity1,
-            entity2,
-            text,
-            sent_spans,
-            config.context_padding,
-        )
-
-        pair_counter += 1
-
-        candidates.append(
-            CandidatePair(
-                pair_id=f"P{pair_counter:05d}",
-                entity1=entity1,
-                entity2=entity2,
-                candidate_relations=relations,
-                context_start=context_start,
-                context_end=context_end,
-            )
-        )
-
-    return candidates
 
 
 # ---------------------------------------------------------
 # Group candidates by shared context
 # ---------------------------------------------------------
 
-def group_candidates(
-    candidates: list[CandidatePair],
-) -> list[ContextGroup]:
+def group_candidates(candidates: list[CandidatePair]) -> list[ContextGroup]:
     """
     Group pairs having identical context boundaries.
 
     Pairs from the same sentence will commonly share a context.
     This avoids repeating the same text in the JEV state.
     """
+    groups: dict[tuple[int, int], list[CandidatePair]] = {}
+    for c in candidates:
+        groups.setdefault((c.context_start, c.context_end), []).append(c)
+    return [ContextGroup(f"C{i:05d}", s, e, pairs) for i, ((s, e), pairs) in enumerate(sorted(groups.items()), 1)]
 
-    groups = {}
-
-    for candidate in candidates:
-
-        key = (
-            candidate.context_start,
-            candidate.context_end,
-        )
-
-        if key not in groups:
-            groups[key] = []
-
-        groups[key].append(candidate)
-
-    result = []
-
-    for index, ((start, end), pairs) in enumerate(
-        sorted(groups.items()),
-        start=1,
-    ):
-
-        result.append(
-            ContextGroup(
-                context_id=f"C{index:05d}",
-                context_start=start,
-                context_end=end,
-                pairs=pairs,
-            )
-        )
-
-    return result
 
 
 
@@ -227,8 +118,10 @@ if __name__ == "__main__":
     candidates = generate_candidates(
         text=text,
         mentions=mentions,
-        sent_spans=sent_spans,
-        config=cfg
+        spans=sent_spans,
+        schema=FINE_RELATIONS,
+        stats=None,
+        cfg=cfg
     )
 
     for i, c in enumerate(candidates):
@@ -236,4 +129,6 @@ if __name__ == "__main__":
         #     break
         print("\n", c, "\n")
         print(text[c.context_start:c.context_end], "\n")
+
+    # print(s)
         
