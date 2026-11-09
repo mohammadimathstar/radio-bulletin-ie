@@ -7,7 +7,7 @@ from itertools import combinations
 from rapidfuzz import fuzz
 
 from .models.models import Mention, CandidatePair, ContextGroup
-from .schema import RELATION_SCHEMA
+from .models.schema_old import RELATION_SCHEMA
 
 
 # ---------------------------------------------------------
