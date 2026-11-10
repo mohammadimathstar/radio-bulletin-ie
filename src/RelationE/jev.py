@@ -34,6 +34,9 @@ RULES
 5. Being close to each other in the text is not a relation. If no listed relation is established by the text, or the text is ambiguous or insufficient, choose no_relation.
 6. A mention that sits inside another mention's phrase (a club inside a match phrase) can still be related to it (it takes part in it)."""
 
+GLOSSARY_RULE = ("\n7. If the state has a relation_glossary, it gives the full definition and Dutch cue phrases of every relation named in the options; "
+                 "an option shows only a short gloss and the head/tail mention ids.")
+
 ChoiceFactory = Callable[..., Any]
 
 
@@ -42,7 +45,9 @@ def default_choice_factory() -> ChoiceFactory:
     return Choice
 
 
-def render_marked_context(text: str, mentions: list[Mention], start: int, end: int) -> str:
+def render_marked_context(text: str, 
+                          mentions: list[Mention], 
+                          start: int, end: int) -> str:
     """text[start:end] with every mention that lies completely inside written as <e id=".." type="..">..</e id="..">. Nested, duplicate and crossing mentions are fine.
     The text is HTML-escaped so OCR characters such as '<' or '&' cannot break the markers."""
     inside = [m for m in mentions if m.start >= start and m.end <= end and m.end > m.start]
@@ -61,8 +66,19 @@ def render_marked_context(text: str, mentions: list[Mention], start: int, end: i
     return "".join(parts)
 
 
-def build_relation_options(entity1: Mention, entity2: Mention, candidate_relations: list[str], schema: dict[str, RelationDefinition] | None = None) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
-    """(criteria for the Choice question, option -> {relation, head, tail}). no_relation is added exactly once and is never a candidate relation."""
+def short_description(description: str) -> str:
+    """The definition without the list of Dutch cue phrases ('Look for ...')."""
+    return description.split(" Look for")[0].split(" Not for")[0].strip()
+ 
+
+
+def build_relation_options(entity1: Mention, 
+                           entity2: Mention, 
+                           candidate_relations: list[str], 
+                           schema: dict[str, RelationDefinition] | None = None,
+                           compact: bool = False) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """(criteria for the Choice question, option -> {relation, head, tail}). no_relation is added exactly once and is never a candidate relation.
+    compact=True: a short gloss and the head/tail ids instead of the full definition (which then belongs in the state's relation_glossary)."""
     schema = schema or get_schema("fine")
     criteria: dict[str, str] = {}
     option_map: dict[str, dict[str, Any]] = {}
@@ -72,22 +88,34 @@ def build_relation_options(entity1: Mention, entity2: Mention, candidate_relatio
             continue
         d = schema[rel]
         if d.symmetric:
-            criteria[rel] = d.description + " This relationship is symmetric: the order of the two mentions does not matter."
+            criteria[rel] = (short_description(d.description) + " (symmetric: the order does not matter)") if compact else \
+                d.description + " This relationship is symmetric: the order of the two mentions does not matter."
             option_map[rel] = {"relation": rel, "head": entity1.mention_id, "tail": entity2.mention_id}
+            # criteria[rel] = d.description + " This relationship is symmetric: the order of the two mentions does not matter."
+            # option_map[rel] = {"relation": rel, "head": entity1.mention_id, "tail": entity2.mention_id}
             continue
         for suffix, head, tail, ok in (("entity1_to_entity2", entity1, entity2, (t1, t2) in d.allowed_types),
                                        ("entity2_to_entity1", entity2, entity1, (t2, t1) in d.allowed_types)):
             if ok:
                 key = f"{rel}__{suffix}"
-                criteria[key] = d.description + f" Semantic direction: {head.mention_id} is the head (subject) and {tail.mention_id} is the tail (object)."
+                criteria[key] = (short_description(d.description) + f" [head={head.mention_id}, tail={tail.mention_id}]") if compact else \
+                    d.description + f" Semantic direction: {head.mention_id} is the head (subject) and {tail.mention_id} is the tail (object)."
+                # criteria[key] = d.description + f" Semantic direction: {head.mention_id} is the head (subject) and {tail.mention_id} is the tail (object)."
                 option_map[key] = {"relation": rel, "head": head.mention_id, "tail": tail.mention_id}
     criteria[NO_RELATION] = "The text does not establish any of the listed relationships between these two mentions."
     option_map[NO_RELATION] = {"relation": NO_RELATION, "head": None, "tail": None}
     return criteria, option_map
 
 
-def build_jev_batches(bulletin: Bulletin, context_groups: list[ContextGroup], schema: dict[str, RelationDefinition] | None = None, max_questions_per_request: int = 20,
-                      choice_factory: ChoiceFactory | None = None, shared_instructions: bool = True) -> list[JEVBatch]:
+def build_jev_batches(
+        bulletin: Bulletin, 
+        context_groups: list[ContextGroup], 
+        schema: dict[str, RelationDefinition] | None = None, 
+        max_questions_per_request: int = 20,
+        choice_factory: ChoiceFactory | None = None, 
+        shared_instructions: bool = True,
+        compact_options: bool = False
+    ) -> list[JEVBatch]:
     """Questions for all pairs, in batches. The pairs of one context stay together; each context appears once per batch."""
     if max_questions_per_request < 1:
         raise ValueError("max_questions_per_request must be at least 1")
@@ -105,21 +133,32 @@ def build_jev_batches(bulletin: Bulletin, context_groups: list[ContextGroup], sc
                                                     "target_pairs": []})
             ctx["target_pairs"].append({"pair_id": p.pair_id, "entity1": {"mention_id": p.entity1.mention_id, "type": p.entity1.entity_type},
                                         "entity2": {"mention_id": p.entity2.mention_id, "type": p.entity2.entity_type}})
-            criteria, option_map = build_relation_options(p.entity1, p.entity2, p.candidate_relations, schema)
+            criteria, option_map = build_relation_options(p.entity1, p.entity2, p.candidate_relations, schema, compact_options)
             qid = f"q_{p.pair_id}"
             task = (f"CLASSIFICATION TASK: use context {g.context_id}. Classify pair {p.pair_id}: entity 1 = {p.entity1.mention_id} (type: {p.entity1.entity_type}), "
                     f"entity 2 = {p.entity2.mention_id} (type: {p.entity2.entity_type}). Select exactly one option.")
-            questions[qid] = choice(instructions=task if shared_instructions else f"{JEV_INSTRUCTIONS}\n\n{task}", criteria=criteria)
+            # questions[qid] = choice(instructions=task if shared_instructions else f"{JEV_INSTRUCTIONS}\n\n{task}", criteria=criteria)
+            questions[qid] = choice(instructions=task if shared_instructions else f"{JEV_INSTRUCTIONS}{GLOSSARY_RULE if compact_options else ''}\n\n{task}", criteria=criteria)
             option_maps[qid] = option_map
             meta[qid] = {"pair_id": p.pair_id, "context_id": g.context_id, "entity1": p.entity1.mention_id, "entity2": p.entity2.mention_id}
         state: dict[str, Any] = {"bulletin_id": bulletin.bulletin_id, "bulletin_date": bulletin.date, "contexts": list(contexts.values())}
         if shared_instructions:
-            state["instructions"] = JEV_INSTRUCTIONS
+            state["instructions"] = JEV_INSTRUCTIONS + (GLOSSARY_RULE if compact_options else "")
+        if compact_options:                                       # the full definitions once per request instead of once per option
+            used = sorted({info["relation"] for om in option_maps.values() for info in om.values() if info["relation"] != NO_RELATION})
+            state["relation_glossary"] = {r: schema[r].description for r in used}
+            # state["instructions"] = JEV_INSTRUCTIONS
         batches.append(JEVBatch(state, questions, option_maps, meta))
     return batches
 
 
-def classify_batch(client: Any, batch: JEVBatch, model: str = "jev-latest", retries: int = 2, backoff: float = 2.0) -> list[PairPrediction]:
+def classify_batch(
+        client: Any, 
+        batch: JEVBatch, 
+        model: str = "jev-latest", 
+        retries: int = 2, 
+        backoff: float = 2.0
+    ) -> list[PairPrediction]:
     """One system_one call for the whole batch; a failing call is repeated (retries) before the error is raised."""
     last: Exception | None = None
     for attempt in range(retries + 1):
@@ -142,7 +181,14 @@ def classify_batch(client: Any, batch: JEVBatch, model: str = "jev-latest", retr
     return out
 
 
-def classify_all(client: Any, batches: list[JEVBatch], model: str = "jev-latest", retries: int = 2, backoff: float = 2.0, progress: bool = False) -> list[PairPrediction]:
+def classify_all(
+        client: Any, 
+        batches: list[JEVBatch], 
+        model: str = "jev-latest", 
+        retries: int = 2, 
+        backoff: float = 2.0, 
+        progress: bool = False
+    ) -> list[PairPrediction]:
     results: list[PairPrediction] = []
     for n, b in enumerate(batches, 1):
         if progress:

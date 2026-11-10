@@ -20,10 +20,10 @@ from dotenv import load_dotenv
 from .decision import DecisionConfig
 from .io import done_ids, load_bulletins, type_counts
 from .jev import ChoiceFactory, make_client
-from .pipeline import PipelineConfig, extract_bulletin, plan_bulletin
+from .pipeline import extract_bulletin, plan_bulletin
 from .schema import ALL_ENTITY_TYPES, check_entity_types, get_schema, validate_schema
 
-from src.configs.re_cfg import CandidateConfig
+from src.configs.re_cfg import CandidateConfig, PipelineConfig
 
 load_dotenv()
 
@@ -42,11 +42,13 @@ def _common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--max-pairs", type=int, help="cap on the pairs per bulletin (nearest pairs are kept)")
     p.add_argument("--max-questions", type=int, default=30, help="questions per JEV request")
     p.add_argument("--no-shared-instructions", action="store_true", help="repeat the instructions in every question")
+    p.add_argument("--compact-options", action="store_true", help="short option glosses; the full definitions once per request in the state (smaller requests)")
 
 
 def _config(a: argparse.Namespace, **over: Any) -> PipelineConfig:
     cand = CandidateConfig(a.max_sentence_distance, a.max_character_distance, a.similarity_threshold, max_pairs=a.max_pairs)
-    return PipelineConfig(level=a.level, candidate=cand, max_questions_per_request=a.max_questions, shared_instructions=not a.no_shared_instructions, **over)
+    # return PipelineConfig(level=a.level, candidate=cand, max_questions_per_request=a.max_questions, shared_instructions=not a.no_shared_instructions, **over)
+    return PipelineConfig(level=a.level, candidate=cand, max_questions_per_request=a.max_questions, shared_instructions=not a.no_shared_instructions, compact_options=a.compact_options, **over)
 
 
 def _bulletins(a: argparse.Namespace):
@@ -62,7 +64,7 @@ def main(argv: list[str] | None = None, client: Any = None, choice_factory: Choi
     ex = sub.add_parser("extract")
     _common(ex)
     ex.add_argument("--out", default="data/relations.jsonl")
-    ex.add_argument("--model", default="jev-latest")
+    ex.add_argument("--model", default="jev-1.14.0")
     ex.add_argument("--min-probability", type=float, default=0.5, help="probability of the relation (both directions added) needed to accept it")
     ex.add_argument("--min-margin", type=float, default=0.0, help="the relation must beat no_relation by this much")
     ex.add_argument("--no-pairs", action="store_true", help="do not keep the probabilities of every pair in the output")

@@ -31,8 +31,9 @@ class PipelineConfig:
     candidate: CandidateConfig = field(default_factory=CandidateConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     max_questions_per_request: int = 20
-    model: str = "jev-latest"
+    model: str = "jev-1.14.0" # "jev-latest"
     shared_instructions: bool = True                      # general instructions once in the state instead of in every question
+    compact_options: bool = False                         # short option glosses + a relation glossary in the state (about half the request size)
     save_pairs: bool = True                               # keep the probabilities of every pair in the output
     merge_duplicates: bool = False                        # also write `relations_merged` (one record per entity pair)
     retries: int = 2
