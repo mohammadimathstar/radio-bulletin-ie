@@ -362,11 +362,6 @@ The CLI maps flags onto these (see `cli.py:_config`). Defaults match the CLI def
 - **NER subtypes are not used by RE.** The RE schema keys on the six top-level types only; subtype-aware relations are a possible future extension.
 - **RE served-model field.** The `model` field records the model *requested* (`jev-latest` may be an alias). If you need the exact served version, thread it back from the JEV response in `jev.py:classify_batch`.
 
----
-
-## License
-
-Not yet chosen. Pick one and add a `LICENSE` file before publishing. For research code with a derived dataset, common choices are **MIT** or **Apache-2.0** for the code, with a separate note that the **source bulletins remain under KB/Delpher terms** (see the Data source section) and are not redistributed by this repository.
 
 ---
 
