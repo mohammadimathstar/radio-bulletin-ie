@@ -1,9 +1,9 @@
 
 from collections import Counter
 
-from .models import Mention, CandidatePair, ContextGroup
+from ..dataLayer.models import Mention, CandidatePair, ContextGroup
 from .sentences import context_boundaries, sentence_distance, character_distance
-from .schema import compatible_relations, FINE_RELATIONS, RelationDefinition, get_schema
+from ..dataLayer.schema import compatible_relations, FINE_RELATIONS, RelationDefinition, get_schema
 
 from src.util.names import is_same_entity
 from src.configs.re_cfg import CandidateConfig
@@ -97,7 +97,7 @@ def group_candidates(candidates: list[CandidatePair]) -> list[ContextGroup]:
 
 if __name__ == "__main__":
     import json
-    from src.RelationE.sentences import sentence_spans, assign_sentence_ids
+    from RelationE.core.sentences import sentence_spans, assign_sentence_ids
 
     with open('data/entity_annotations_raw.jsonl', 'r', encoding='utf-8') as f:
        lines = [json.loads(line) for line in f.readlines()]

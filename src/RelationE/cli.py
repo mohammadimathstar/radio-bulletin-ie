@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
 
-from .decision import DecisionConfig
-from .io import done_ids, load_bulletins, type_counts
-from .jev import ChoiceFactory, make_client
+from .core.decision import DecisionConfig
+from .dataLayer.io import done_ids, load_bulletins, type_counts
+from .core.jev import ChoiceFactory, make_client
 from .pipeline import extract_bulletin, plan_bulletin
-from .schema import ALL_ENTITY_TYPES, check_entity_types, get_schema, validate_schema
+from .dataLayer.schema import ALL_ENTITY_TYPES, check_entity_types, get_schema, validate_schema
 
 from src.configs.re_cfg import CandidateConfig, PipelineConfig
 
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None, client: Any = None, choice_factory: Choi
 
 
 if __name__=='__main__':
-    print('hi')
+    
     main()
 
     # uv run python -m src.RelationE.cli extract

@@ -2,7 +2,7 @@ import re
 import unicodedata
 import difflib
 
-from src.RelationE.models import Mention
+from RelationE.dataLayer.models import Mention
 from src.configs.re_cfg import CandidateConfig
 
 try:                                         # rapidfuzz is optional; difflib is the fallback

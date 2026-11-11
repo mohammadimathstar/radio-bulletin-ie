@@ -15,8 +15,8 @@ import html
 import time
 from typing import Any, Callable
 
-from .models import Bulletin, CandidatePair, ContextGroup, JEVBatch, Mention, PairPrediction
-from .schema import NO_RELATION, RelationDefinition, get_schema
+from ..dataLayer.models import Bulletin, CandidatePair, ContextGroup, JEVBatch, Mention, PairPrediction
+from ..dataLayer.schema import NO_RELATION, RelationDefinition, get_schema
 
 JEV_INSTRUCTIONS = """You are a relation classification system for historical Dutch radio bulletins from 1939.
 

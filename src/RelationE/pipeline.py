@@ -10,12 +10,12 @@ from collections import Counter
 from typing import Any, Callable
 from dataclasses import dataclass
 
-from .generator import generate_candidates, group_candidates
-from .decision import decide, merge_duplicate_relations
-from .jev import ChoiceFactory, build_jev_batches, classify_all
-from .models import Bulletin, CandidatePair, ContextGroup, JEVBatch
-from .schema import NO_RELATION, get_schema
-from .sentences import assign_sentence_ids, sentence_spans
+from .core.generator import generate_candidates, group_candidates
+from .core.decision import decide, merge_duplicate_relations
+from .core.jev import ChoiceFactory, build_jev_batches, classify_all
+from .dataLayer.models import Bulletin, CandidatePair, ContextGroup, JEVBatch
+from .dataLayer.schema import NO_RELATION, get_schema
+from .core.sentences import assign_sentence_ids, sentence_spans
 
 from src.configs.re_cfg import PipelineConfig
 

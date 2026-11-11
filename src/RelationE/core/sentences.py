@@ -5,7 +5,7 @@ import re
 from bisect import bisect_right
 from typing import Iterable
 
-from .models import Mention
+from ..dataLayer.models import Mention
 from src.configs.re_cfg import CandidateConfig
 
 _BOUNDARY = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[A-Z0-9\"'(])")

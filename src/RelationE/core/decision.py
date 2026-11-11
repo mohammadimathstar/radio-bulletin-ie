@@ -18,8 +18,8 @@ from typing import Any
 from src.util.names import mention_key
 from src.configs.re_cfg import DecisionConfig
 
-from .models import CandidatePair, Mention, PairPrediction
-from .schema import COARSE_TO_CATEGORY, FINE_TO_COARSE, NO_RELATION
+from ..dataLayer.models import CandidatePair, Mention, PairPrediction
+from ..dataLayer.schema import COARSE_TO_CATEGORY, FINE_TO_COARSE, NO_RELATION
 
 
 
