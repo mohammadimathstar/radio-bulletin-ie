@@ -17,11 +17,15 @@ The downstream **knowledge-graph construction** (NetworkX + RDF/SPARQL) is inten
 flowchart LR
     A["ANP bulletins<br/>(KB dataset, 1939 subset)<br/>JSONL: bulletin_id, text"] --> N["NER<br/>src/NER<br/>LLM + Structured Outputs"]
     N --> E["entity_annotations_raw.jsonl<br/>entities, topics, offsets"]
-    E --> C["candidate pairs<br/>src/RelationE/generator"]
-    C --> J["JEV batches<br/>src/RelationE/jev"]
-    J --> D["decision + merge<br/>src/RelationE/decision"]
+    E --> C["candidate pairs<br/>src/RelationE/core/generator"]
+    C --> J["JEV batches<br/>src/RelationE/core/jev"]
+    J --> D["decision + merge<br/>src/RelationE/core/decision"]
     D --> R["relations.jsonl<br/>relations, probabilities, model"]
-    R --> KG["radio-bulletin-kg<br/>(separate repo)"]
+    R --> RF["refine (optional)<br/>src/RelationE/refine"]
+    RF --> RR["relations_refined.jsonl"]
+    RR --> EX["export<br/>src/RelationE/export"]
+    EX --> NR["ner_re.jsonl + Label Studio tasks"]
+    RR --> KG["radio-bulletin-kg<br/>(separate repo)"]
 ```
 
 The NER output is the RE input. The RE output is the KG input. Each stage is resumable (per-bulletin caching, append-only JSONL).
@@ -50,8 +54,13 @@ The source material is the **[Delpher ANP radio bulletins digital](https://www.k
 ```
 radio-bulletin-ie/
 ├── data/                          # input & output JSONL (not committed; see .gitignore)
-│   ├── *.jsonl                    # NER input, NER output, RE output
-│   └── annotation_issues.jsonl    # per-bulletin issue log
+│   ├── entity_annotations_raw.jsonl   # NER output  =  RE input
+│   ├── relations.jsonl                # RE first pass
+│   ├── relations_refined.jsonl        # RE after refine
+│   ├── ner_re.jsonl                   # combined NER+RE (export)
+│   ├── label_studio_tasks.json        # Label Studio pre-annotation tasks
+│   ├── label_studio_config.xml        # Label Studio labeling interface
+│   └── annotation_issues.jsonl        # per-bulletin issue log
 ├── src/
 │   ├── NER/                       # Stage 1 — LLM named entity recognition
 │   │   ├── run.py                 # entry point: chunk → call → correct → validate
@@ -65,13 +74,17 @@ radio-bulletin-ie/
 │   ├── RelationE/                 # Stage 2 — JEV relation extraction
 │   │   ├── cli.py                 # plan / extract / schema-check commands
 │   │   ├── pipeline.py            # end-to-end orchestration per bulletin
-│   │   ├── generator.py           # candidate pair generation + context grouping
-│   │   ├── sentences.py           # sentence segmentation, distances, context spans
-│   │   ├── jev.py                 # marked contexts, option builder, JEV batches & calls
-│   │   ├── decision.py            # probability → relation decision + dedup merge
-│   │   ├── schema.py              # 3-level relation schema (fine/coarse/category)
-│   │   ├── models.py              # dataclasses (Mention, Bulletin, CandidatePair, …)
-│   │   └── io.py                  # read/clean NER output for RE
+│   │   ├── refine.py              # second pass: re-run low-relation bulletins (undecided pairs only)
+│   │   ├── export.py              # combine NER+RE → ner_re.jsonl + Label Studio tasks
+│   │   ├── core/
+│   │   │   ├── generator.py       # candidate pair generation + context grouping
+│   │   │   ├── jev.py             # marked contexts, option builder, JEV batches & calls
+│   │   │   ├── decision.py        # probability → relation decision + dedup merge
+│   │   │   └── sentences.py       # sentence segmentation, distances, context spans
+│   │   └── dataLayer/
+│   │       ├── schema.py          # 3-level relation schema (fine/coarse/category)
+│   │       ├── models.py          # dataclasses (Mention, Bulletin, CandidatePair, …)
+│   │       └── io.py              # read/clean NER output for RE
 │   ├── configs/
 │   │   ├── ner_cfg.py             # ApiConfig(client, model)
 │   │   └── re_cfg.py              # PipelineConfig, CandidateConfig, DecisionConfig
@@ -113,7 +126,7 @@ The active schema is `src/NER/models/entities.py`. `entities_long_desc.py` is a 
 
 ## Relation schema (three levels)
 
-The fine-grained schema in `src/RelationE/schema.py` is the source of truth; coarse relations and categories are derived from it. `no_relation` is an **abstention option**, not a relation.
+The fine-grained schema in `src/RelationE/dataLayer/schema.py` is the source of truth; coarse relations and categories are derived from it. `no_relation` is an **abstention option**, not a relation.
 
 - **33 fine relations**, grouped into **14 coarse relations** across **7 categories**:
 
@@ -134,7 +147,7 @@ The fine-grained schema in `src/RelationE/schema.py` is the source of truth; coa
 | spatial_media | located_in | located_in, capital_of, based_in |
 | spatial_media | reported | reported |
 
-Each relation declares its allowed `(subject_type, object_type)` pairs and whether it is **symmetric** (`met_with`, `negotiated_with`, `allied_with`, `competed_against`). Direction is semantic, not textual: the classifier picks the option with the correct head (subject) and tail (object). The schema self-validates via `validate_schema()` (`python -m src.RelationE.schema`).
+Each relation declares its allowed `(subject_type, object_type)` pairs and whether it is **symmetric** (`met_with`, `negotiated_with`, `allied_with`, `competed_against`). Direction is semantic, not textual: the classifier picks the option with the correct head (subject) and tail (object). The schema self-validates via `validate_schema()` (`python -m src.RelationE.dataLayer.schema`).
 
 ---
 
@@ -176,7 +189,7 @@ OPENAI_MODEL=gpt-6-luna          # any OpenAI Responses-API model you have acces
 TYPESAFE_API_KEY=...             # for the JEV client (typesafe_sdk.TypeSafeClient)
 ```
 
-> The default model read by `run.py` is `OPENAI_MODEL` (currently `gpt-6-luna` in `run.py`); override it to whatever Responses-API model you use. For RE, the model is `jev-latest` by default and can be overridden with `--model`.
+> The default model read by `run.py` is `OPENAI_MODEL` (currently `gpt-6-luna` in `run.py`); override it to whatever Responses-API model you use. For RE, the model is `jev-1.14.0` by default and can be overridden with `--model`.
 
 ---
 
@@ -236,7 +249,7 @@ The `model` field records which model produced the annotation, for traceability.
 
 ## Usage — RE stage
 
-Input: the NER output JSONL above. The RE stage only consumes each entity's `type` (subtypes/topics/event fields are ignored at this point); see `src/RelationE/io.py` for the cleaning step (unknown types dropped, low-confidence filtered, offsets repaired, duplicate spans de-duplicated).
+Input: the NER output JSONL above. The RE stage only consumes each entity's `type` (subtypes/topics/event fields are ignored at this point); see `src/RelationE/dataLayer/io.py` for the cleaning step (unknown types dropped, low-confidence filtered, offsets repaired, duplicate spans de-duplicated).
 
 ### Dry run (no JEV calls)
 
@@ -290,9 +303,9 @@ Reports entity types present in the data vs. the schema, and relations that can 
 
 ### How RE works
 
-1. **Candidates** (`generator.py`): for every pair of mentions within the distance/character budget, compatible relations are listed (type-compatible in either direction); same-entity and nested-same-type pairs are suppressed. Pairs sharing a context are grouped so the text is sent to JEV only once.
-2. **JEV state** (`jev.py`): each context is rendered with mentions marked as `<e id=".." type="..">…</e id="..">` (closing tags repeat the id because mentions can nest). Each pair becomes one multiple-choice question with one option per relation+direction, plus symmetric options, plus exactly one `no_relation`. Questions are batched (`--max-questions`).
-3. **Decision** (`decision.py`): for each pair, probabilities of the two directions of a relation are **summed**; the best relation is accepted iff `p_relation >= min_probability` **and** `p_relation - p_no_relation >= min_margin`. Direction uncertainty is reported as `direction_confidence`.
+1. **Candidates** (`core/generator.py`): for every pair of mentions within the distance/character budget, compatible relations are listed (type-compatible in either direction); same-entity and nested-same-type pairs are suppressed. Pairs sharing a context are grouped so the text is sent to JEV only once.
+2. **JEV state** (`core/jev.py`): each context is rendered with mentions marked as `<e id=".." type="..">…</e id="..">` (closing tags repeat the id because mentions can nest). Each pair becomes one multiple-choice question with one option per relation+direction, plus symmetric options, plus exactly one `no_relation`. Questions are batched (`--max-questions`).
+3. **Decision** (`core/decision.py`): for each pair, probabilities of the two directions of a relation are **summed**; the best relation is accepted iff `p_relation >= min_probability` **and** `p_relation - p_no_relation >= min_margin`. Direction uncertainty is reported as `direction_confidence`.
 
 ### RE output record
 
@@ -329,6 +342,72 @@ One JSONL line per bulletin:
 
 The `pairs` array preserves every pair's full probability distribution so decision thresholds can be re-tuned **without re-calling JEV** — the main cost driver. The `model` field records the requested JEV model per bulletin for traceability (set in `extract_bulletin`).
 
+
+### Refine — second pass
+
+After `extract`, bulletins with too few relations are re-run with **wider candidate settings**, sending only the pairs that were **not** decided before to JEV — so the cost is incremental, not a full re-run.
+
+```bash
+uv run python -m src.RelationE.refine \
+  --previous data/relations.jsonl \
+  --input data/entity_annotations_raw.jsonl \
+  --out data/relations_refined.jsonl \
+  --min-relations 1 \
+  --max-sentence-distance 1 --max-character-distance 300
+```
+
+What it does:
+
+1. reads `--previous` and selects bulletins with `n_relations < --min-relations` (and, with `--include-missing`, NER bulletins not yet in the previous output);
+2. regenerates candidate pairs with the **new** (wider) settings;
+3. drops every pair the previous run already decided — a pair is identified by its two NER mention ids (`pair_id`s are renumbered every run, so they are not used); this requires the previous run to have kept `pairs` (i.e. **not** run with `--no-pairs`);
+4. sends only the new pairs to JEV, with new `pair_id`s that continue the old numbering;
+5. writes **one combined output**: untouched bulletins copied as-is, refined bulletins get old + new `relations`, `pairs`, counts, and a `refinement` log entry (settings + numbers of this round). The output of a round can be the `--previous` of the next round.
+
+Refine-specific flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--previous` | `data/relations.jsonl` | output of the previous run (must contain `pairs`) |
+| `--input` | `data/entity_annotations_raw.jsonl` | NER output |
+| `--out` | `data/relations_refined.jsonl` | combined output (untouched + refined) |
+| `--min-relations` | `1` | re-run bulletins with fewer relations than this |
+| `--max-sentence-distance` | `1` | new candidate setting (widen vs. `extract`) |
+| `--max-character-distance` | `300` | new candidate setting |
+| `--max-pairs` | — | new cap on pairs per bulletin |
+| `--include-missing` | off | also run NER bulletins not in `--previous` |
+| `--ids` | — | refine only these bulletin ids (if below threshold) |
+| `--limit` | — | refine at most N bulletins |
+| `--dry-run` | off | report what would be done, no JEV call |
+| `--restart` | off | start the output file again |
+| `--report` | — | write a JSON summary (per-bulletin before/after) |
+
+Model, level and decision flags (`--model`, `--level`, `--max-questions`, `--min-probability`, `--min-margin`, `--merge-duplicates`) have the same meaning as in `extract`. Only settings that **widen** the candidate set (`--max-sentence-distance`, `--max-character-distance`, `--max-pairs`) should change between rounds: old decisions were made on contexts built with the old padding/context limits, and the thresholds apply to the **new** pairs only (old decisions are kept as-is). The output is written bulletin by bulletin, so an interrupted run continues where it stopped (run again with the same `--out`).
+
+### Export — combined output & Label Studio
+
+Combine the NER record with the (refined) relation record into one per-bulletin line, and emit Label Studio pre-annotation tasks for human review.
+
+```bash
+uv run python -m src.RelationE.export \
+  --ner data/entity_annotations_raw.jsonl \
+  --relations data/relations_refined.jsonl \
+  --combined-out data/ner_re.jsonl \
+  --ls-out data/label_studio_tasks.json \
+  --ls-config data/label_studio_config.xml
+```
+
+Outputs:
+
+- **`ner_re.jsonl`** — one record per bulletin: everything from the NER record (text, topics, all entities with subtype/normalized_name/confidence) plus
+  - `entities[].status` — `"kept"` if the entity took part in RE, otherwise the reason (`unknown_type`, `low_confidence`, `bad_offsets`, or `duplicate_of:<id>`);
+  - `relations` — each relation with head/tail NER entity ids, texts, types, `probability`/`margin`/`direction_confidence`, `pair_id`, and evidence span;
+  - `re` — `{schema_level, n_pairs, n_requests, n_relations, refinement}`.
+- **`label_studio_tasks.json`** — one task per bulletin: text + bulletin metadata as `data`; kept entities as labelled regions (typed, or subtyped with `--entity-labels subtype`); relations as Label Studio relations head→tail (`direction: right`), all as **predictions** (pre-annotations the reviewer accepts or corrects) — or `--as annotations` to import them as editable annotations.
+- **`label_studio_config.xml`** — the labeling interface config (entity labels coloured by type, every relation type of the schema level). Paste it into the project (Settings → Labeling Interface → Code) **before** importing the tasks; the `from_name`/`to_name` (`label`/`text`) must match.
+
+Useful flags: `--min-probability` (drop low-probability relations), `--only-with-relations`, `--include-without-re` (also bulletins that have NER but no relations), `--ids` (a file of bulletin ids), `--limit`.
+
 ---
 
 ## Configuration
@@ -360,7 +439,7 @@ The CLI maps flags onto these (see `cli.py:_config`). Defaults match the CLI def
 - **No cross-bulletin entity resolution.** Mention ids identify occurrences within one bulletin; the same real-world entity across bulletins is not linked here. That is planned for `radio-bulletin-kg`.
 - **No knowledge-graph code in this repo.** NetworkX/RDF/SPARQL construction lives in the companion `radio-bulletin-kg` repository, which consumes `relations.jsonl`.
 - **NER subtypes are not used by RE.** The RE schema keys on the six top-level types only; subtype-aware relations are a possible future extension.
-- **RE served-model field.** The `model` field records the model *requested* (`jev-latest` may be an alias). If you need the exact served version, thread it back from the JEV response in `jev.py:classify_batch`.
+- **RE served-model field.** The `model` field records the model *requested* (`jev-latest` may be an alias). If you need the exact served version, thread it back from the JEV response in `core/jev.py:classify_batch`.
 
 
 ---
