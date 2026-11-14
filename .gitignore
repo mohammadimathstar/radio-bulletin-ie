@@ -10,6 +10,8 @@ wheels/
 *.zip
 
 data
+archive
+*ipynb
 
 # Virtual environments
 .venv

@@ -292,6 +292,6 @@ if __name__ == "__main__":
     parser.add_argument("--input", default="data/processed_annotations_v2_with_qid_cleaned.jsonl")
     parser.add_argument("--entity-output", default="data/entity_annotations_raw.jsonl")
     parser.add_argument("--output", default="data/annotations_raw.jsonl")
-    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--limit", type=int, default=1)
     args = parser.parse_args()
     run(args.input, args.entity_output, args.output, args.limit)
