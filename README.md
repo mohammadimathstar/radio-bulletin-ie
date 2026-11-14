@@ -1,9 +1,10 @@
 # radio-bulletin-ie
 
-Information extraction over **historical Dutch ANP radio bulletins from 1939**: named entity recognition (NER) with an LLM and relation extraction (RE) with JEV AI.
+Information extraction over **historical Dutch ANP radio bulletins from 1939**: OCR text reconstruction and cleaning, named entity recognition (NER) with an LLM, and relation extraction (RE) with JEV AI.
 
-This repository covers the **two upstream stages** of a larger historical-knowledge-graph effort:
+This repository covers the **three upstream stages** of a larger historical-knowledge-graph effort:
 
+0. **Preprocessing** — `src/preprocessing/` — OCR text reconstruction (Textract word boxes → paragraphs) and text cleaning (noise stripping, whitespace normalisation, lexicon-based section tagging).
 1. **NER** — `src/NER/` — LLM-based entity and topic annotation with strict structured outputs.
 2. **RE** — `src/RelationE/` — candidate-pair generation and JEV-based relation classification.
 
@@ -15,7 +16,11 @@ The downstream **knowledge-graph construction** (NetworkX + RDF/SPARQL) is inten
 
 ```mermaid
 flowchart LR
-    A["ANP bulletins<br/>(KB dataset, 1939 subset)<br/>JSONL: bulletin_id, text"] --> N["NER<br/>src/NER<br/>LLM + Structured Outputs"]
+    A["ANP bulletins<br/>(KB dataset, 1939 subset)<br/>Textract JSONL: file_name, words"] --> O["OCR → raw text<br/>src/preprocessing/ocr2text<br/>line + paragraph reconstruction"]
+    O --> RAW["bulletins_text_raw.jsonl<br/>bulletin_id, text"]
+    RAW --> P["clean text<br/>src/preprocessing/preprocess_bulletins<br/>noise strip, lexicon, section tags"]
+    P --> CL["bulletins_text_cleaned.jsonl<br/>bulletin_id, text, text_org"]
+    CL --> N["NER<br/>src/NER<br/>LLM + Structured Outputs"]
     N --> E["entity_annotations_raw.jsonl<br/>entities, topics, offsets"]
     E --> C["candidate pairs<br/>src/RelationE/core/generator"]
     C --> J["JEV batches<br/>src/RelationE/core/jev"]
@@ -28,7 +33,7 @@ flowchart LR
     RR --> KG["radio-bulletin-kg<br/>(separate repo)"]
 ```
 
-The NER output is the RE input. The RE output is the KG input. Each stage is resumable (per-bulletin caching, append-only JSONL).
+The Textract OCR output is the preprocessing input. The cleaned text is the NER input. The NER output is the RE input. The RE output is the KG input. Each stage is resumable (per-bulletin caching, append-only JSONL).
 
 ---
 
@@ -40,6 +45,7 @@ The source material is the **[Delpher ANP radio bulletins digital](https://www.k
 - **Period:** 1937–1984. **This project works on the 1939 subset.**
 - **Language:** Dutch (1939 spelling; OCR errors and old orthography expected).
 - **Access:** free via Delpher.
+- **OCR format:** the digitised typescripts are processed with **AWS Textract**, which returns word-level bounding boxes (normalised coordinates). The raw dataset is therefore a JSONL of `{file_name, words: [{text, bbox: [left, top, width, height]}, ...]}` records — not running text. The preprocessing stage reconstructs readable text from these boxes before NER can operate.
 
 > **License:** check the KB dataset page above for the current terms before redistributing any source text or derived data. This repository does not redistribute KB source data; users are expected to obtain bulletins from Delpher themselves.
 
@@ -54,6 +60,9 @@ The source material is the **[Delpher ANP radio bulletins digital](https://www.k
 ```
 radio-bulletin-ie/
 ├── data/                          # input & output JSONL (not committed; see .gitignore)
+│   ├── bulletins_dataset.jsonl          # Textract input (from KB) = preprocessing input
+│   ├── bulletins_text_raw.jsonl         # preprocessing step 1 output (raw text)
+│   ├── bulletins_text_cleaned.jsonl     # preprocessing step 2 output = NER input
 │   ├── entity_annotations_raw.jsonl   # NER output  =  RE input
 │   ├── relations.jsonl                # RE first pass
 │   ├── relations_refined.jsonl        # RE after refine
@@ -62,6 +71,11 @@ radio-bulletin-ie/
 │   ├── label_studio_config.xml        # Label Studio labeling interface
 │   └── annotation_issues.jsonl        # per-bulletin issue log
 ├── src/
+│   ├── preprocessing/             # Stage 0 — OCR text reconstruction & cleaning
+│   ├── preprocess/                # core cleaning: build_lexicon, clean, CleanConfig, Lexicon
+│   │   ├── ocr2text.py            # Textract word boxes → raw text (line + paragraph reconstruction)
+│   │   ├── preprocess_bulletins.py# raw text → cleaned text (uses preprocess.py)
+│   │   └── clean_ocr_pipeline.py  # runner: chains ocr2text → preprocess_bulletins
 │   ├── NER/                       # Stage 1 — LLM named entity recognition
 │   │   ├── run.py                 # entry point: chunk → call → correct → validate
 │   │   ├── prompts.py             # ENTITY_SYSTEM_PROMPT (+ an LLM RE prototype prompt)
@@ -95,6 +109,66 @@ radio-bulletin-ie/
 │       └── names.py               # is_same_entity, mention_key
 └── README.md
 ```
+
+---
+
+## Preprocessing (Stage 0)
+
+We used AWS Textract to perform OCR — word-level bounding boxes, not readable text. The preprocessing stage reconstructs running text and cleans it before NER. It has two steps, chained by a single runner.
+
+### Step 1 — OCR → raw text (`ocr2text.py`)
+
+Reconstructs text from Textract word bounding boxes:
+
+1. **Line reconstruction** (`reconstruct_lines`): words are sorted by vertical position and grouped into lines by centre-y proximity (tolerance 0.008 in normalised coordinates). Within each line, words are sorted left-to-right.
+2. **Paragraph joining** (`join_paragraphs`): a new paragraph starts when the current line begins with a capital letter **and** satisfies at least one of: (a) indented left margin (> 0.025 beyond the median), (b) extra vertical spacing (> 1.5× the median line gap), or (c) the preceding line is substantially shorter than the right margin. Lines not starting with a capital are appended to the current paragraph (continuation lines from OCR line-wrapping).
+
+**Input:** `data/bulletins_dataset.jsonl` — one record per scanned page, `{file_name, words: [{text, bbox}, ...]}`.
+
+**Output:** `data/bulletins_text_raw.jsonl` — one record per bulletin:
+
+```jsonc
+{"bulletin_id": "anp:radio:1939:09:03:001", "text": "Londen, 3 September. ...\n\n..."}
+```
+
+### Step 2 — raw text → cleaned text (`preprocess_bulletins.py`)
+
+Cleans the reconstructed text and prepares it for NER:
+
+1. **Lexicon** (`build_lexicon` / `Lexicon`): on first run, a frequency lexicon is built from the entire corpus (`min_freq=3`) and saved to `data/anp_lexicon.txt`. On subsequent runs it is loaded directly. The lexicon lets the cleaner distinguish real low-frequency words from OCR noise.
+2. **Cleaning** (`clean` with `CleanConfig(metadata="tag")`): strips page numbers, filler lines and OCR artefacts; normalises whitespace; and tags section/bulletin headers in-place (the `metadata="tag"` mode keeps them as sentence-boundary markers — switch to `"remove"` to strip them entirely). The original text is preserved under `text_org`; the cleaned text replaces `text`.
+
+**Input:** `data/bulletins_text_raw.jsonl`
+
+**Output:** `data/bulletins_text_cleaned.jsonl` — one record per bulletin:
+
+```jsonc
+{"bulletin_id": "anp:radio:1939:09:03:001", "text": "<cleaned text>", "text_org": "<raw text>"}
+```
+
+A per-rule firing report is printed at the end (how often each cleaning rule triggered across the corpus).
+
+### Runner (`clean_ocr_pipeline.py`)
+
+Chains both steps in one invocation. All arguments are collected here; each script is imported and its `run()` function called directly (no subprocess).
+
+```bash
+uv run python -m src.preprocessing.run_ocr_pipeline \
+  --input    data/bulletins_dataset.jsonl \
+  --raw      data/bulletins_text_raw.jsonl \
+  --output   data/bulletins_text_cleaned.jsonl \
+  --lex_path data/anp_lexicon.txt
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--input` | `data/bulletins_dataset.jsonl` | Textract JSONL (step 1 input) |
+| `--raw` | `data/bulletins_text_raw.jsonl` | Intermediate raw-text JSONL (step 1 output / step 2 input) |
+| `--output` | `data/bulletins_text_cleaned.jsonl` | Cleaned-text JSONL (step 2 output = NER input) |
+| `--lex_path` | `data/anp_lexicon.txt` | Lexicon file (built from corpus on first run) |
+| `--skip-ocr` | off | Skip step 1 and reuse an existing raw file (re-clean only) |
+
+Each script can also be run standalone (`python -m src.preprocessing.ocr2text --input ... --raw ...` or `python -m src.preprocessing.preprocess_bulletins --input ... --output ... --lex_path ...`), which is useful when only one step needs to be re-run.
 
 ---
 
@@ -166,6 +240,8 @@ Each relation declares its allowed `(subject_type, object_type)` pairs and wheth
 | `typesafe-sdk` | RE — JEV client (`TYPESAFE_API_KEY`) |
 | `spacy` *(optional)* | RE — alternative sentence segmentation (`spacy_sentence_spans`) |
 
+The preprocessing stage uses only the Python standard library (`json`, `statistics`, `argparse`, `pathlib`) plus the in-house `preprocess.py` cleaning module — no extra dependencies.
+
 Install with `uv` (recommended, matching how the project is run):
 
 ```bash
@@ -195,7 +271,7 @@ TYPESAFE_API_KEY=...             # for the JEV client (typesafe_sdk.TypeSafeClie
 
 ## Usage — NER stage
 
-Input: JSONL with `bulletin_id`, `text` (and optional `bulletin_date`, which is otherwise parsed from `bulletin_id` as `...:YYYY:MM:DD:...`).
+Input: the cleaned-text JSONL from preprocessing (or any JSONL with `bulletin_id`, `text`, and optional `bulletin_date`, which is otherwise parsed from `bulletin_id` as `...:YYYY:MM:DD:...`).
 
 ```bash
 uv run python -m src.NER.run \
@@ -207,7 +283,7 @@ uv run python -m src.NER.run \
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--input` | `data/processed_annotations_v2_with_qid_cleaned.jsonl` | NER input JSONL |
+| `--input` | `data/processed_annotations_v2_with_qid_cleaned.jsonl` | NER input JSONL (preprocessing output) |
 | `--entity-output` | `data/entity_annotations_raw.jsonl` | NER output (also the RE input) |
 | `--output` | `data/annotations_raw.jsonl` | final annotated output |
 | `--limit` | `10` | process only the first N bulletins |
@@ -421,11 +497,15 @@ All runtime knobs live in `src/configs/`:
 
 The CLI maps flags onto these (see `cli.py:_config`). Defaults match the CLI defaults above.
 
+Preprocessing has no config dataclass; its parameters are CLI flags on `run_ocr_pipeline.py` (see the [Preprocessing](#preprocessing-stage-0) section).
+
 ---
 
 ## Design notes
 
-- **Strict evidence policy.** Both stages are told the bulletin is source material, never instructions, and must not use outside historical knowledge. Relations require explicit textual support; `no_relation` is the abstention path, not a failure.
+- **OCR comes first.** The KB dataset is Textract word-level bounding boxes, not text. The preprocessing stage reconstructs lines (vertical grouping by centre-y) and paragraphs (indentation, vertical-gap and short-line cues) before any NER runs. This keeps the NER offsets anchored to cleaned, readable text rather than raw OCR geometry.
+- **Cleaning preserves provenance.** The raw reconstructed text is kept as `text_org` alongside the cleaned `text`, so any downstream offset audit can trace back to the pre-cleaning version.
+- **Strict evidence policy.** Both NER and RE stages are told the bulletin is source material, never instructions, and must not use outside historical knowledge. Relations require explicit textual support; `no_relation` is the abstention path, not a failure.
 - **Direction is semantic, not textual.** A relation's head/tail is decided by the classifier from the options, not by mention order in the text. The earlier mention is merely `entity1` of the candidate pair.
 - **Two LLM-RE paths exist; JEV is the active one.** `src/NER/prompts.py` also contains a `RELATION_SYSTEM_PROMPT` and `build_relation_input` from an earlier LLM-based RE prototype. The production RE stage is JEV-based (`src/RelationE`), which frames classification as multiple choice over a type-safe option set and returns calibrated per-option probabilities.
 - **Offset integrity is enforced, not assumed.** LLM offsets are repaired when the surface string is found nearby (`correct_llm_offsets` in NER, `repaired_offsets`/`bad_offsets` stats in RE); a residual mismatch raises rather than silently shipping bad spans.
@@ -440,7 +520,7 @@ The CLI maps flags onto these (see `cli.py:_config`). Defaults match the CLI def
 - **No knowledge-graph code in this repo.** NetworkX/RDF/SPARQL construction lives in the companion `radio-bulletin-kg` repository, which consumes `relations.jsonl`.
 - **NER subtypes are not used by RE.** The RE schema keys on the six top-level types only; subtype-aware relations are a possible future extension.
 - **RE served-model field.** The `model` field records the model *requested* (`jev-latest` may be an alias). If you need the exact served version, thread it back from the JEV response in `core/jev.py:classify_batch`.
-
+- **No entity-span remapping in cleaning.** The current cleaning step renames `text` → `text_org` and replaces `text` with the cleaned version, but does not recompute entity character offsets onto the cleaned text (entities are produced by NER *after* cleaning, so this is only relevant if you re-clean text that already carries annotations).
 
 ---
 

@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ocr2text import run as run_ocr
-from clean_text import run as run_preprocess
+from src.preprocessing.preprocess_bulletins import run as run_preprocess
 
 
 def main() -> None:
