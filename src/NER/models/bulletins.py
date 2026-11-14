@@ -50,7 +50,7 @@ class NEROutput(BaseModel):
 def parse_bulletin_id(bulletin_id: str) -> str | None:
     parts = bulletin_id.split(":")
     try:
-        inferred_date = date(int(parts[2]), int(parts[3]), int(parts[4])).isoformat()
+        inferred_date = date(int(parts[-5]), int(parts[-4]), int(parts[-3])).isoformat()
     except ValueError:
         inferred_date = None
     return inferred_date

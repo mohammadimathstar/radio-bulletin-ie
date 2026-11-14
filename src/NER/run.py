@@ -174,32 +174,6 @@ def run_ner_chunk(
 
             all_entities.append(entity)
 
-    # Keep only entities whose offsets were successfully located.
-    # located = []
-    # dropped = []
-
-    # for entity in all_entities:
-    #     if entity.get("offset_method") in LOCATED_STATUSES:
-    #         located.append(entity)
-    #     else:
-    #         dropped.append(entity)
-
-    # if dropped:
-    #     log_issue(
-    #         issue_output_path,
-    #         bid,
-    #         "NER",
-    #         [
-    #             f"dropped {len(dropped)} unlocatable entities: "
-    #             + ", ".join(e["id"] for e in dropped)
-    #         ],
-    #     )
-
-    # # Remove internal offset diagnostics before final validation.
-    # for entity in located:
-    #     entity.pop("offset_method", None)
-    #     entity.pop("offset_score", None)
-
     ner_dict = {
         "topics": all_topics,
         "entities": all_entities, # located,
@@ -248,7 +222,7 @@ def run(
         raise RuntimeError("OPENAI_API_KEY is missing. Add it to .env.")
 
     client = OpenAI(
-        # api_key=api_key,
+        api_key=api_key,
         timeout=180.0,
         # max_retries=0,
     )
@@ -289,7 +263,7 @@ def run(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="data/processed_annotations_v2_with_qid_cleaned.jsonl")
+    parser.add_argument("--input", default="data/bulletins_processed.jsonl")
     parser.add_argument("--entity-output", default="data/entity_annotations_raw.jsonl")
     parser.add_argument("--output", default="data/annotations_raw.jsonl")
     parser.add_argument("--limit", type=int, default=1)

@@ -12,10 +12,15 @@ def read_jsonl(path: str) -> list[dict]:
             if not line.strip():
                 continue
             raw = json.loads(line)
+            bulletin_id = raw.get('id') or raw.get("bulletin_id")
+            if "_" in bulletin_id:
+                bulletin_id = bulletin_id.replace("_", ":")
+            
             record = BulletinInput(
-                bulletin_id=raw["id"],
+                bulletin_id=bulletin_id,
                 text=raw["text"],
             )
+            
             if record.bulletin_id in ids:
                 raise ValueError(
                     f"Duplicate bulletin_id {record.bulletin_id} at line {line_no}"
