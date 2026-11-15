@@ -263,7 +263,7 @@ def run(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="data/bulletins_processed.jsonl")
+    parser.add_argument("--input", default="data/preprocessed/bulletins_processed.jsonl")
     parser.add_argument("--entity-output", default="data/entity_annotations_raw.jsonl")
     parser.add_argument("--output", default="data/annotations_raw.jsonl")
     parser.add_argument("--limit", type=int, default=1)
