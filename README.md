@@ -72,7 +72,7 @@ radio-bulletin-ie/
 │   └── annotation_issues.jsonl        # per-bulletin issue log
 ├── src/
 │   ├── preprocessing/             # Stage 0 — OCR text reconstruction & cleaning
-│   ├── preprocess/                # core cleaning: build_lexicon, clean, CleanConfig, Lexicon
+│   │   ├── preprocess/            # core cleaning: build_lexicon, clean, CleanConfig, Lexicon
 │   │   ├── ocr2text.py            # Textract word boxes → raw text (line + paragraph reconstruction)
 │   │   ├── preprocess_bulletins.py# raw text → cleaned text (uses preprocess.py)
 │   │   └── clean_ocr_pipeline.py  # runner: chains ocr2text → preprocess_bulletins
